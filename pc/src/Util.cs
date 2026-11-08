@@ -24,6 +24,7 @@ namespace ScreenLinkPC
         public bool Audio = true;
         public int AudioDev = -1;             // -1 = périphérique par défaut
         public bool ShowFinger = true;
+        public bool MuteTel = false;
         public int Port = 27183;
         public string AdbPath = "";
         public int X = -1, Y = -1, W = 0, H = 0;
@@ -61,6 +62,7 @@ namespace ScreenLinkPC
                         case "Audio": s.Audio = v == "1"; break;
                         case "AudioDev": if (int.TryParse(v, out n)) s.AudioDev = n; break;
                         case "ShowFinger": s.ShowFinger = v == "1"; break;
+                        case "MuteTel": s.MuteTel = v == "1"; break;
                         case "Port": if (int.TryParse(v, out n)) s.Port = n; break;
                         case "X": if (int.TryParse(v, out n)) s.X = n; break;
                         case "Y": if (int.TryParse(v, out n)) s.Y = n; break;
@@ -81,7 +83,7 @@ namespace ScreenLinkPC
                 l.Add("Mode=" + Mode); l.Add("Host=" + Host); l.Add("Pin=" + Pin); l.Add("AdbPath=" + AdbPath);
                 l.Add("MaxSize=" + MaxSize); l.Add("Fps=" + Fps); l.Add("Kbps=" + Kbps);
                 l.Add("Audio=" + (Audio ? "1" : "0")); l.Add("AudioDev=" + AudioDev);
-                l.Add("ShowFinger=" + (ShowFinger ? "1" : "0")); l.Add("Port=" + Port);
+                l.Add("ShowFinger=" + (ShowFinger ? "1" : "0")); l.Add("MuteTel=" + (MuteTel ? "1" : "0")); l.Add("Port=" + Port);
                 l.Add("X=" + X); l.Add("Y=" + Y); l.Add("W=" + W); l.Add("H=" + H);
                 File.WriteAllLines(FilePath, l.ToArray(), new UTF8Encoding(false));
             }
@@ -120,6 +122,30 @@ namespace ScreenLinkPC
                 if (!p.WaitForExit(timeoutMs)) { try { p.Kill(); } catch { } }
                 return o;
             }
+        }
+    }
+}
+
+namespace ScreenLinkPC
+{
+    /// <summary>Journal %APPDATA%\ScreenLinkPC\log.txt (connexions, déconnexions, erreurs) pour comprendre une coupure.</summary>
+    static class Log
+    {
+        static readonly object lk = new object();
+        public static void W(string s)
+        {
+            try
+            {
+                string d = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "ScreenLinkPC");
+                System.IO.Directory.CreateDirectory(d);
+                string f = System.IO.Path.Combine(d, "log.txt");
+                lock (lk)
+                {
+                    if (System.IO.File.Exists(f) && new System.IO.FileInfo(f).Length > 200000) System.IO.File.Delete(f);
+                    System.IO.File.AppendAllText(f, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + s + "\r\n");
+                }
+            }
+            catch { }
         }
     }
 }

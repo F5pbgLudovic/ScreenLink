@@ -62,6 +62,50 @@ public class CaptureService extends Service {
         return p;
     }
 
+    private int savedVol = -1;
+
+    /** Coupe le volume média du téléphone (le son reste capté pour le PC) ; remet le volume ensuite. */
+    synchronized void setPhoneMute(boolean mute) {
+        try {
+            android.media.AudioManager am = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+            if (mute && savedVol < 0) {
+                savedVol = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC);
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, 0, 0);
+                if (am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) != 0) am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_MUTE, 0);
+            } else if (!mute && savedVol >= 0) {
+                am.adjustStreamVolume(android.media.AudioManager.STREAM_MUSIC, android.media.AudioManager.ADJUST_UNMUTE, 0);
+                am.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, savedVol, 0);
+                savedVol = -1;
+            }
+        } catch (Exception e) { }
+    }
+
+    // Le gestionnaire d énergie de certains téléphones (OnePlus/Oppo « HANS ») gèle une application passée en arrière-plan,
+    // même avec un service au premier plan, sauf si elle joue du son : on joue donc un silence en continu.
+    private volatile boolean keepAlive;
+    private Thread keepThread;
+
+    private void startKeepAlive() {
+        keepAlive = true;
+        keepThread = new Thread(new Runnable() { public void run() {
+            android.media.AudioTrack t = null;
+            try {
+                int min = android.media.AudioTrack.getMinBufferSize(8000, android.media.AudioFormat.CHANNEL_OUT_MONO, android.media.AudioFormat.ENCODING_PCM_16BIT);
+                t = new android.media.AudioTrack.Builder()
+                        .setAudioAttributes(new android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA).setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+                        .setAudioFormat(new android.media.AudioFormat.Builder().setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT).setSampleRate(8000).setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build())
+                        .setBufferSizeInBytes(Math.max(min, 4000)).setTransferMode(android.media.AudioTrack.MODE_STREAM).build();
+                t.play();
+                byte[] z = new byte[1600];
+                while (keepAlive) t.write(z, 0, z.length);
+            } catch (Exception e) { }
+            finally { try { if (t != null) { t.stop(); t.release(); } } catch (Exception e) { } }
+        } }, "SL-keepalive");
+        keepThread.start();
+    }
+
+    private void stopKeepAlive() { keepAlive = false; }
+
     String pin() { return pin(this); }
     boolean locked() { return System.currentTimeMillis() < lockedUntil; }
     synchronized void failed() { if (++fails >= 5) { fails = 0; lockedUntil = System.currentTimeMillis() + 60000; } }
@@ -122,6 +166,7 @@ public class CaptureService extends Service {
         };
         dm.registerDisplayListener(dl, h);
 
+        startKeepAlive();
         inst = this;
         running = true;
         acceptThread = new Thread(new Runnable() { public void run() { acceptLoop(); } }, "SL-accept");
@@ -186,6 +231,8 @@ public class CaptureService extends Service {
     @Override public void onDestroy() {
         running = false;
         inst = null;
+        setPhoneMute(false);
+        stopKeepAlive();
         try { if (server != null) server.close(); } catch (Exception e) { }
         Session c = current;
         if (c != null) c.close();

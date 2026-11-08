@@ -18,7 +18,7 @@ namespace ScreenLinkPC
         readonly ToolStripStatusLabel lbl = new ToolStripStatusLabel();
         ComboBox cbMode, cbSize, cbFps, cbRate, cbDev;
         TextBox tbHost, tbPin;
-        CheckBox chkAudio, chkFinger, chkMute;
+        CheckBox chkAudio, chkFinger, chkMute, chkMuteTel;
         Button btnConnect;
 
         Link link;
@@ -35,7 +35,7 @@ namespace ScreenLinkPC
 
         public MainForm()
         {
-            Text = "ScreenLink V1.0 @F5PBG 2026";
+            Text = "ScreenLink V1.1 @F5PBG 2026";
             Icon = SystemIcons.Application;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             BackColor = Color.FromArgb(24, 28, 36);
@@ -59,7 +59,10 @@ namespace ScreenLinkPC
             view.Wheel = delegate(float x, float y, int dx, int dy, bool c) { if (link != null) link.Scroll(x, y, dx, dy, c); };
             view.Key = delegate(int k) { if (link != null) link.Key(k); };
 
-            if (st.W > 200 && st.H > 200 && st.X > -2000)
+            Rectangle saved = new Rectangle(st.X, st.Y, Math.Max(st.W, 1), Math.Max(st.H, 1));
+            bool visibleSaved = false;
+            foreach (Screen sc in Screen.AllScreens) { Rectangle i = Rectangle.Intersect(sc.WorkingArea, saved); if (i.Width > 100 && i.Height > 100) visibleSaved = true; }
+            if (st.W > 200 && st.H > 200 && visibleSaved)
             {
                 Location = new Point(st.X, st.Y);
                 Size = new Size(st.W, st.H);
@@ -67,8 +70,8 @@ namespace ScreenLinkPC
             else CenterToScreen();
             loading = false;
             SetStatus(L.T("Non connecté", "Not connected"));
-            Shown += delegate { if (st.Host.Length == 0 && st.Mode == "wifi") tbHost.Focus(); };
-            ResizeEnd += delegate { KeepAspect(); };
+            Shown += delegate { if (st.Host.Length == 0 && st.Mode == "wifi") tbHost.Focus(); if (Array.IndexOf(Environment.GetCommandLineArgs(), "/connect") > 0) Connect(); };
+            MinimumSize = new Size(430, 500);
             FormClosing += delegate { SaveSettings(); Disconnect(); };
         }
 
@@ -119,6 +122,7 @@ namespace ScreenLinkPC
             chkAudio = new CheckBox { Text = L.T("Son", "Audio"), Checked = st.Audio, AutoSize = true, Margin = new Padding(8, 6, 2, 0) };
             chkMute = new CheckBox { Text = L.T("Muet", "Mute"), AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
             chkMute.CheckedChanged += delegate { if (aout != null) aout.Muted = chkMute.Checked; };
+            chkMuteTel = new CheckBox { Text = "Mute tel", Checked = st.MuteTel, AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
             cbDev = Combo(170);
             cbDev.Items.Add(L.T("Sortie son par défaut", "Default audio output"));
             foreach (string d in AudioOut.Devices()) cbDev.Items.Add(d);
@@ -126,9 +130,9 @@ namespace ScreenLinkPC
             chkFinger = new CheckBox { Text = L.T("Montrer le doigt", "Show finger"), Checked = st.ShowFinger, AutoSize = true, Margin = new Padding(8, 6, 2, 0) };
             chkFinger.CheckedChanged += delegate { view.ShowFinger = chkFinger.Checked; };
             view.ShowFinger = st.ShowFinger;
-            r2.Controls.AddRange(new Control[] { Lab(L.T("Taille max", "Max size")), cbSize, Lab("fps"), cbFps, Lab("Mbit/s"), cbRate, chkAudio, chkMute, cbDev, chkFinger });
+            r2.Controls.AddRange(new Control[] { Lab(L.T("Taille max", "Max size")), cbSize, Lab("fps"), cbFps, Lab("Mbit/s"), cbRate, chkAudio, chkMute, chkMuteTel, cbDev, chkFinger });
             EventHandler apply = delegate { ApplySettings(); };
-            cbSize.SelectedIndexChanged += apply; cbFps.SelectedIndexChanged += apply; cbRate.SelectedIndexChanged += apply; chkAudio.CheckedChanged += apply;
+            cbSize.SelectedIndexChanged += apply; cbFps.SelectedIndexChanged += apply; cbRate.SelectedIndexChanged += apply; chkAudio.CheckedChanged += apply; chkMuteTel.CheckedChanged += apply;
 
             r3.Controls.AddRange(new Control[] {
                 Btn("◀ " + L.T("Retour", "Back"), 80, delegate { K(Link.KEY_BACK); }),
@@ -152,10 +156,11 @@ namespace ScreenLinkPC
         void ToggleBars()
         {
             bool show = !top.Visible;
-            int before = view.Height;
+            int vh = Math.Max(200, ClientSize.Height - Chrome());
             top.Visible = show; strip.Visible = show;
-            if (!show) Text = "ScreenLink V1.0 @F5PBG 2026";
-            KeepAspect();
+            if (!show) Text = "ScreenLink V1.1 @F5PBG 2026";
+            PerformLayout();
+            FitWindow(vh, false);
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -177,28 +182,62 @@ namespace ScreenLinkPC
             base.OnKeyPress(e);
         }
 
-        void KeepAspect()
+        [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+        struct RECT { public int Left, Top, Right, Bottom; }
+
+        int Chrome() { return (top.Visible ? top.Height : 0) + (strip.Visible ? strip.Height : 0); }
+
+        /// <summary>Hauteur des barres pour une largeur donnée (les boutons passent à la ligne quand la fenêtre est étroite).</summary>
+        int ChromeFor(int cw)
         {
-            if (curW <= 0 || WindowState != FormWindowState.Normal) return;
-            Rectangle wa = Screen.FromControl(this).WorkingArea;
-            int chrome = ClientSize.Height - view.Height;     // hauteur occupée par les barres
-            int vh = ClientSize.Height - chrome;
-            int vw = (int)Math.Round(vh * (curW / (double)curH));
-            if (vw < 120) vw = 120;
-            int maxW = wa.Width - (Width - ClientSize.Width);
-            if (vw > maxW) { vw = maxW; vh = (int)Math.Round(vw * (curH / (double)curW)); }
-            ClientSize = new Size(vw, vh + chrome);
+            int h = 0;
+            if (top.Visible) foreach (Control c in top.Controls) h += c.GetPreferredSize(new Size(cw, 0)).Height;
+            if (strip.Visible) h += strip.Height;
+            return h;
         }
 
-        void FitFirst()
+        /// <summary>Pendant qu'on tire sur un bord de la fenêtre, garde les proportions du téléphone.</summary>
+        protected override void WndProc(ref Message m)
         {
-            Rectangle wa = Screen.FromControl(this).WorkingArea;
-            int chrome = ClientSize.Height - view.Height;
-            int borderH = Height - ClientSize.Height;
-            int vh = (int)((wa.Height - borderH - chrome) * 0.92);
-            ClientSize = new Size((int)(vh * (curW / (double)curH)), vh + chrome);
-            Location = new Point(wa.Left + (wa.Width - Width) / 2, wa.Top + Math.Max(0, (wa.Height - Height) / 2));
+            if (m.Msg == 0x214 && curW > 0 && curH > 0 && WindowState == FormWindowState.Normal)
+            {
+                RECT r = (RECT)System.Runtime.InteropServices.Marshal.PtrToStructure(m.LParam, typeof(RECT));
+                int nonW = Width - ClientSize.Width, nonH0 = Height - ClientSize.Height, nonH = nonH0 + Chrome();
+                double ratio = curW / (double)curH;
+                int edge = m.WParam.ToInt32();
+                int cw = r.Right - r.Left - nonW, ch = r.Bottom - r.Top - nonH;
+                if (edge == 3 || edge == 6) r.Right = r.Left + (int)Math.Round(ch * ratio) + nonW;
+                else
+                {
+                    int nh = (int)Math.Round(cw / ratio) + nonH0 + ChromeFor(cw);
+                    if (edge == 4 || edge == 5) r.Top = r.Bottom - nh; else r.Bottom = r.Top + nh;
+                }
+                System.Runtime.InteropServices.Marshal.StructureToPtr(r, m.LParam, false);
+            }
+            base.WndProc(ref m);
         }
+
+        /// <summary>Dimensionne la fenêtre aux proportions du téléphone, sans dépasser 90 % de l'écran.</summary>
+        void FitWindow(int wantVideoH, bool center)
+        {
+            if (curW <= 0 || curH <= 0 || WindowState != FormWindowState.Normal) return;
+            Rectangle wa = Screen.FromControl(this).WorkingArea;
+            int nonW = Width - ClientSize.Width, nonH = Height - ClientSize.Height, chrome = Chrome();
+            double ratio = curW / (double)curH;
+            int maxVH = (int)(wa.Height * 0.9) - nonH - chrome;
+            int maxVW = (int)(wa.Width * 0.9) - nonW;
+            int vh = Math.Min(wantVideoH, Math.Min(maxVH, (int)(maxVW / ratio)));
+            if (vh < 200) vh = 200;
+            int vw = (int)Math.Round(vh * ratio);
+            ClientSize = new Size(vw, vh + chrome);
+            int x = center ? wa.Left + (wa.Width - Width) / 2 : Left, y = center ? wa.Top + (wa.Height - Height) / 2 : Top;
+            x = Math.Max(wa.Left, Math.Min(x, wa.Right - Width));
+            y = Math.Max(wa.Top, Math.Min(y, wa.Bottom - Height));
+            Location = new Point(x, y);
+        }
+
+        void KeepAspect() { FitWindow(Math.Max(200, ClientSize.Height - Chrome()), false); }
+        void FitFirst() { FitWindow(curH, true); }
 
         void SavePng()
         {
@@ -216,7 +255,7 @@ namespace ScreenLinkPC
             if (InvokeRequired) { try { BeginInvoke((MethodInvoker)delegate { SetStatus(s); }); } catch { } return; }
             lbl.Text = s;
             if (!top.Visible) return;
-            Text = "ScreenLink V1.0 @F5PBG 2026 — " + s;
+            Text = "ScreenLink V1.1 @F5PBG 2026 — " + s;
         }
 
         void SaveSettings()
@@ -227,7 +266,7 @@ namespace ScreenLinkPC
             st.MaxSize = sizes[cbSize.SelectedIndex];
             st.Fps = new int[] { 24, 30, 60 }[cbFps.SelectedIndex];
             st.Kbps = new int[] { 2000, 4000, 8000, 12000, 20000, 30000 }[cbRate.SelectedIndex];
-            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked;
+            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked; st.MuteTel = chkMuteTel.Checked;
             st.AudioDev = cbDev.SelectedIndex - 1;
             if (WindowState == FormWindowState.Normal && !loading) { st.X = Left; st.Y = Top; st.W = Width; st.H = Height; }
             st.Save();
@@ -324,7 +363,9 @@ namespace ScreenLinkPC
             {
                 try { BeginInvoke((MethodInvoker)delegate { if (link == l) { Disconnect(); if (why != null) SetStatus(why); } }); } catch { }
             };
+            StartDecoder();
             link = l;
+            l.Start();
             connecting = false;
             try { BeginInvoke((MethodInvoker)delegate { btnConnect.Text = L.T("Déconnecter", "Disconnect"); view.Focus(); }); } catch { }
             SetStatus(L.T("Connecté — en attente de l'image…", "Connected — waiting for video…"));
@@ -336,7 +377,7 @@ namespace ScreenLinkPC
             Link l = link;
             link = null;
             if (l != null) l.Close(null);
-            lock (decLock) { if (dec != null) { dec.Dispose(); dec = null; } }
+            StopDecoder();
             if (aout != null) { aout.Dispose(); aout = null; }
             if (btnConnect != null) btnConnect.Text = L.T("Connecter", "Connect");
             SetStatus(L.T("Non connecté", "Not connected"));
@@ -362,20 +403,71 @@ namespace ScreenLinkPC
             SetStatus(phoneName + "  " + curW + "×" + curH + "  " + fpsShown + " fps" + extra);
         }
 
+        sealed class Job { public int W, H, Off, Len; public byte[] D; public bool Key, Config; }
+        readonly Queue<Job> jobs = new Queue<Job>();
+        readonly AutoResetEvent jobEv = new AutoResetEvent(false);
+        Thread decThread;
+        volatile bool decStop;
+        bool needKey;
+
+        void StartDecoder()
+        {
+            StopDecoder();
+            lock (jobs) { jobs.Clear(); needKey = false; }
+            decStop = false;
+            decThread = new Thread(DecodeLoop) { IsBackground = true, Name = "SL-decode" };
+            decThread.Start();
+        }
+
+        void StopDecoder()
+        {
+            decStop = true;
+            jobEv.Set();
+            Thread t = decThread;
+            decThread = null;
+            if (t != null && t != Thread.CurrentThread) t.Join(1500);
+        }
+
+        void DecodeLoop()
+        {
+            MfDecoder d = null;
+            while (!decStop)
+            {
+                jobEv.WaitOne(200);
+                while (!decStop)
+                {
+                    Job j;
+                    lock (jobs) { if (jobs.Count == 0) break; j = jobs.Dequeue(); }
+                    try
+                    {
+                        if (j.Config)
+                        {
+                            if (d != null) d.Dispose();
+                            d = null;
+                            d = new MfDecoder(j.W, j.H);
+                            d.Frame = delegate(IntPtr p, int stride, int fw, int fh) { view.Present(p, stride, fw, fh); frames++; };
+                            view.Reset(j.W, j.H);
+                            d.Decode(j.D, 0, j.D.Length);
+                        }
+                        else if (d != null) d.Decode(j.D, j.Off, j.Len);
+                    }
+                    catch (Exception e) { Log.W("Decodeur : " + e); SetStatus(L.T("Décodeur H.264 : ", "H.264 decoder: ") + e.Message); if (d != null) { try { d.Dispose(); } catch { } d = null; } }
+                    long now = Stopwatch.GetTimestamp();
+                    if (now - fpsT >= Stopwatch.Frequency) { fpsShown = frames; frames = 0; fpsT = now; ShowRunning(); }
+                }
+            }
+            if (d != null) d.Dispose();
+        }
+
         void OnVideoConfig(int w, int h, byte[] csd)
         {
-            lock (decLock)
+            lock (jobs)
             {
-                if (dec != null) { dec.Dispose(); dec = null; }
-                try
-                {
-                    dec = new MfDecoder(w, h);
-                    dec.Frame = delegate(IntPtr p, int stride, int fw, int fh) { view.Present(p, stride, fw, fh); frames++; };
-                    view.Reset(w, h);
-                    dec.Decode(csd, 0, csd.Length);
-                }
-                catch (Exception e) { SetStatus(L.T("Décodeur H.264 : ", "H.264 decoder: ") + e.Message); dec = null; return; }
+                jobs.Clear();
+                jobs.Enqueue(new Job { Config = true, W = w, H = h, D = csd });
+                needKey = false;
             }
+            jobEv.Set();
             bool first = curW == 0;
             curW = w; curH = h;
             try
@@ -389,20 +481,26 @@ namespace ScreenLinkPC
             catch { }
         }
 
+        /// <summary>Thread de réception : ne fait que mettre l'image en file (le son n'est jamais retardé par le décodage).</summary>
         void OnVideoFrame(byte[] d, int off, int len, bool key)
         {
-            lock (decLock)
+            bool askKey = false;
+            lock (jobs)
             {
-                if (dec == null) return;
-                try { dec.Decode(d, off, len); }
-                catch (Exception e) { SetStatus("Decode : " + e.Message); }
+                if (jobs.Count > 6)
+                {
+                    Queue<Job> keep = new Queue<Job>();
+                    foreach (Job x in jobs) if (x.Config) keep.Enqueue(x);
+                    jobs.Clear();
+                    foreach (Job x in keep) jobs.Enqueue(x);
+                    needKey = true; askKey = true;
+                }
+                if (needKey && !key) return;
+                if (key) needKey = false;
+                jobs.Enqueue(new Job { D = d, Off = off, Len = len, Key = key });
             }
-            long now = Stopwatch.GetTimestamp();
-            if (now - fpsT >= Stopwatch.Frequency)
-            {
-                fpsShown = frames; frames = 0; fpsT = now;
-                ShowRunning();
-            }
+            jobEv.Set();
+            if (askKey) { Link l = link; if (l != null) l.RequestKeyFrame(); }
         }
 
         void OnAudioConfig(int rate, int ch)
@@ -413,7 +511,7 @@ namespace ScreenLinkPC
                 aout = new AudioOut(rate, ch, cbDev.SelectedIndex - 1);
                 aout.Muted = chkMute.Checked;
             }
-            catch (Exception e) { SetStatus(L.T("Sortie son : ", "Audio output: ") + e.Message); }
+            catch (Exception e) { Log.W("Audio : " + e); SetStatus(L.T("Sortie son : ", "Audio output: ") + e.Message); }
         }
     }
 

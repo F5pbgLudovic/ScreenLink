@@ -16,8 +16,10 @@ Serveur vers PC : 1 config vidéo (L,H sur 2 octets + SPS/PPS), 2 image (pts 8 +
 PC vers serveur : 10 toucher (action, x, y flottants 0-1), 11 molette, 12 touche, 13 texte UTF-8, 14 réglages (taille, fps, débit, son), 15 image clé, 16 ping (2 s ; coupure après 8 s de silence).
 Dimensions encodées multiples de 16 (pas de bordure de décodage) ; les coordonnées sont normalisées.
 
-## État V1.0 (2026-11-08)
-Code complet, compile (APK 1.0 signé, exe x64). **Pas encore essayé de bout en bout sur le téléphone** au moment de la publication : à valider (service d'accessibilité, fluidité des glissements, couleurs BT.709 vs 601 : `VideoView.Bt709`, son, rotation, mode USB). Corriger puis publier une 1.1.
+## État V1.1 (2026-11-08, publiée)
+V1.0 publiée sans essai de bout en bout. **Essais du 2026-11-08 sur le OnePlus (Android 12) avec un banc de test PC (mêmes Link/MfDecoder/VideoView) : connexion, image H.264 décodée (864x1920, couleurs BT.709 correctes), son capté (YouTube), touche Accueil et glissement exécutés par le service d accessibilité : OK.** V1.1 : case « Mute tel » (volume média du téléphone à 0 pendant la prise, son toujours transmis au PC, volume rétabli à la déconnexion) ; il manquait la permission MODIFY_AUDIO_SETTINGS (sans elle setStreamVolume est ignoré en silence : les boutons Vol +/− de la 1.0 ne marchaient pas non plus) ; setStreamVolume(0) puis repli sur ADJUST_MUTE. Reste à essayer : fenêtre PC réelle avec souris, mode USB complet, rotation, clavier/texte, Android 14.
 
 ## Chaîne d'outils
 `android\build.ps1` utilise `J:\claude\SDRLINK Smartphone\toolchain` (JDK, Gradle, SDK) ; `android\local.properties` (non publié) donne `sdk.dir`. Clé `screenlink.jks` (mot de passe `screenlink`) hors dépôt.
+
+**V1.1 — corrections vérifiées par F5PBG (connexion stable)** : fil de décodage séparé et double tampon côté PC, son waveOut avec 16 tampons ; côté téléphone file son prioritaire, image envoyée d'une traite (l'envoi par morceaux laissait s'intercaler du son au milieu d'une image : « trame invalide », déconnexion immédiate), AudioTrack silencieux contre le gel HANS du OnePlus ; fenêtre PC qui garde le ratio du téléphone à l'agrandissement comme à la réduction.

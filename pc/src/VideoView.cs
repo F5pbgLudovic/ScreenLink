@@ -10,7 +10,7 @@ namespace ScreenLinkPC
     /// <summary>Affiche l'écran du téléphone et traduit la souris en touchers.</summary>
     sealed unsafe class VideoView : Control
     {
-        Bitmap bmp;
+        Bitmap bmp, back;
         readonly object lk = new object();
         public int VW, VH;
         public bool ShowFinger = true;
@@ -44,17 +44,20 @@ namespace ScreenLinkPC
                 VW = w; VH = h;
                 if (bmp != null) { bmp.Dispose(); bmp = null; }
                 bmp = new Bitmap(w, h, PixelFormat.Format32bppRgb);
+                if (back != null) { back.Dispose(); back = null; }
+                back = new Bitmap(w, h, PixelFormat.Format32bppRgb);
             }
         }
 
         /// <summary>Convertit une image NV12 en pixels et demande l'affichage.</summary>
         public void Present(IntPtr nv12, int stride, int w, int h)
         {
-            lock (lk)
+            Bitmap bmp2;
+            lock (lk) { bmp2 = back; }
             {
-                if (bmp == null || bmp.Width > w || bmp.Height > h) return;
-                int cw = bmp.Width, ch = bmp.Height;
-                BitmapData bd = bmp.LockBits(new Rectangle(0, 0, cw, ch), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
+                if (bmp2 == null || bmp2.Width > w || bmp2.Height > h) return;
+                int cw = bmp2.Width, ch = bmp2.Height;
+                BitmapData bd = bmp2.LockBits(new Rectangle(0, 0, cw, ch), ImageLockMode.WriteOnly, PixelFormat.Format32bppRgb);
                 IntPtr src = nv12, dst = bd.Scan0;
                 int dstStride = bd.Stride, uvOff = stride * h;
                 bool b709 = Bt709;
@@ -83,8 +86,9 @@ namespace ScreenLinkPC
                         }
                     }
                 });
-                bmp.UnlockBits(bd);
+                bmp2.UnlockBits(bd);
             }
+            lock (lk) { if (back == bmp2) { Bitmap t = bmp; bmp = back; back = t; } }
             if (IsHandleCreated) { try { BeginInvoke((MethodInvoker)delegate { Invalidate(); }); } catch { } }
         }
 

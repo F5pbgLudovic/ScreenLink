@@ -32,7 +32,9 @@ final class Session implements Runnable {
     private final Socket sock;
     private DataInputStream in;
     private OutputStream out;
-    private final LinkedBlockingDeque<byte[]> q = new LinkedBlockingDeque<>();
+    private final LinkedBlockingDeque<byte[]> qa = new LinkedBlockingDeque<>();   // son + infos : prioritaire
+    private final LinkedBlockingDeque<byte[]> qv = new LinkedBlockingDeque<>();   // image
+    private final java.util.concurrent.Semaphore sem = new java.util.concurrent.Semaphore(0);
     private final AtomicInteger videoQ = new AtomicInteger(), audioQ = new AtomicInteger();
     private volatile boolean closed;
     private volatile boolean waitKey = true;
@@ -63,7 +65,8 @@ final class Session implements Runnable {
         if (closed) return;
         closed = true;
         try { sock.close(); } catch (Exception e) { }
-        q.offer(new byte[]{0, 0, 0, 0, 0});     // réveille le fil d'écriture
+        qa.offer(new byte[]{0, 0, 0, 0, 0});     // réveille le fil d écriture
+        sem.release();
     }
 
     // ---------------------------------------------------------------- connexion
@@ -72,6 +75,7 @@ final class Session implements Runnable {
         try {
             sock.setTcpNoDelay(true);
             sock.setKeepAlive(true);
+            try { sock.setSendBufferSize(65536); } catch (Exception e) { }
             sock.setSoTimeout(8000);
             in = new DataInputStream(sock.getInputStream());
             out = sock.getOutputStream();
@@ -99,6 +103,7 @@ final class Session implements Runnable {
             out.write(0); out.flush();
 
             writer = new Thread(new Runnable() { public void run() { writeLoop(); } }, "SL-writer");
+            writer.setPriority(Thread.MAX_PRIORITY);
             writer.start();
             sendInfo();
             readLoop();
@@ -109,6 +114,7 @@ final class Session implements Runnable {
             stopVideo();
             stopAudio();
             if (writer != null) { try { writer.join(1000); } catch (Exception e) { } }
+            svc.setPhoneMute(false);
             svc.detach(this);
         }
     }
@@ -140,6 +146,7 @@ final class Session implements Runnable {
                 fps = b.get() & 0xFF;
                 kbps = b.getInt();
                 audioOn = b.get() != 0;
+                svc.setPhoneMute(b.hasRemaining() && b.get() != 0);
                 if (maxSize < 160) maxSize = 160;
                 if (fps < 5) fps = 5; if (fps > 60) fps = 60;
                 if (kbps < 500) kbps = 500;
@@ -199,17 +206,32 @@ final class Session implements Runnable {
         pkt[1] = (byte) (payload.length >>> 24); pkt[2] = (byte) (payload.length >>> 16);
         pkt[3] = (byte) (payload.length >>> 8); pkt[4] = (byte) payload.length;
         System.arraycopy(payload, 0, pkt, 5, payload.length);
-        q.offer(pkt);
+        if (type == V_CONFIG || type == V_FRAME) qv.offer(pkt); else qa.offer(pkt);
+        sem.release();
     }
 
     private void writeLoop() {
         try {
+            byte[] cur = null;
+            int off = 0;
             while (!closed) {
-                byte[] pkt = q.take();
-                if (pkt[0] == V_FRAME) videoQ.decrementAndGet();
-                else if (pkt[0] == A_DATA) audioQ.decrementAndGet();
-                if (pkt[0] == 0) break;
-                out.write(pkt);
+                byte[] a = qa.poll();                      // le son passe toujours en premier
+                if (a != null) {
+                    if (a[0] == 0) break;
+                    if (a[0] == A_DATA) audioQ.decrementAndGet();
+                    out.write(a);
+                    continue;
+                }
+                if (cur == null) {
+                    cur = qv.poll(); off = 0;
+                    if (cur != null && cur[0] == V_FRAME) videoQ.decrementAndGet();
+                }
+                if (cur != null) {                         // le son passe entre deux images
+                    out.write(cur);                        // une image entière d une traite : le flux ne doit jamais être entrecoupé
+                    cur = null;
+                    continue;
+                }
+                sem.tryAcquire(20, java.util.concurrent.TimeUnit.MILLISECONDS);
             }
         } catch (Exception e) { /* fin */ }
         close();
@@ -220,7 +242,7 @@ final class Session implements Runnable {
         if (waitKey && !key) return;
         if (key) waitKey = false;
         if (videoQ.get() >= 8) {                       // réseau trop lent : on jette l'image en retard
-            for (Iterator<byte[]> it = q.iterator(); it.hasNext(); ) {
+            for (Iterator<byte[]> it = qv.iterator(); it.hasNext(); ) {
                 byte[] p = it.next();
                 if (p[0] == V_FRAME) { it.remove(); videoQ.decrementAndGet(); }
             }
@@ -232,7 +254,7 @@ final class Session implements Runnable {
 
     private void putAudio(byte[] pcm) {
         if (audioQ.get() >= 200) {
-            for (Iterator<byte[]> it = q.iterator(); it.hasNext() && audioQ.get() > 100; ) {
+            for (Iterator<byte[]> it = qa.iterator(); it.hasNext() && audioQ.get() > 100; ) {
                 byte[] p = it.next();
                 if (p[0] == A_DATA) { it.remove(); audioQ.decrementAndGet(); }
             }
@@ -352,6 +374,7 @@ final class Session implements Runnable {
             audioStop = false;
             final AudioRecord r = rec;
             audioThread = new Thread(new Runnable() { public void run() {
+                android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_URGENT_AUDIO);
                 byte[] buf = new byte[RATE / 50 * 4];      // 20 ms
                 while (!audioStop && !closed) {
                     int n = r.read(buf, 0, buf.length);

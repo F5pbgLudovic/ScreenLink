@@ -60,10 +60,6 @@ namespace ScreenLinkPC
                 if (r != 0) { tcp.Close(); return L.T("Le téléphone a fermé la connexion (le partage est-il démarré ?)", "The phone closed the connection (is sharing started?)"); }
                 SendSettings(st);
                 ns.ReadTimeout = 8000;
-                reader = new Thread(ReadLoop) { IsBackground = true, Name = "SL-read" };
-                reader.Start();
-                pinger = new Thread(PingLoop) { IsBackground = true, Name = "SL-ping" };
-                pinger.Start();
                 return null;
             }
             catch (Exception e)
@@ -73,6 +69,14 @@ namespace ScreenLinkPC
                 if (e is EndOfStreamException || e is IOException) return L.T("Le téléphone a fermé la connexion (le partage est-il démarré ?)", "The phone closed the connection (is sharing started?)");
                 return e.Message;
             }
+        }
+
+        public void Start()
+        {
+            reader = new Thread(ReadLoop) { IsBackground = true, Name = "SL-read" };
+            reader.Start();
+            pinger = new Thread(PingLoop) { IsBackground = true, Name = "SL-ping" };
+            pinger.Start();
         }
 
         byte[] ReadN(int n)
@@ -128,6 +132,7 @@ namespace ScreenLinkPC
             }
             catch (Exception e)
             {
+                Log.W("ReadLoop : " + e.GetType().Name + " " + e.Message);
                 if (!closed) why = (e is IOException || e is EndOfStreamException) ? L.T("Connexion perdue", "Connection lost") : e.Message;
             }
             Close(why);
@@ -146,6 +151,7 @@ namespace ScreenLinkPC
         {
             if (closed) return;
             closed = true;
+            Log.W("Link ferme : " + (why ?? "(demande locale)"));
             try { tcp.Close(); } catch { }
             if (Closed != null) Closed(why);
         }
@@ -171,11 +177,12 @@ namespace ScreenLinkPC
 
         public void SendSettings(Settings st)
         {
-            byte[] b = new byte[8];
+            byte[] b = new byte[9];
             b[0] = (byte)(st.MaxSize >> 8); b[1] = (byte)st.MaxSize;
             b[2] = (byte)st.Fps;
             PutI(b, 3, st.Kbps);
             b[7] = (byte)(st.Audio ? 1 : 0);
+            b[8] = (byte)(st.MuteTel ? 1 : 0);
             Send(C_SETTINGS, b);
         }
 

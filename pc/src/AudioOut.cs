@@ -43,7 +43,9 @@ namespace ScreenLinkPC
             return l;
         }
 
-        const int NBUF = 8;
+        [DllImport("winmm.dll")] static extern uint timeBeginPeriod(uint ms);
+        [DllImport("winmm.dll")] static extern uint timeEndPeriod(uint ms);
+        const int NBUF = 16;
         readonly int chunk;
         IntPtr hwo;
         readonly IntPtr[] hdrs = new IntPtr[NBUF];
@@ -54,6 +56,7 @@ namespace ScreenLinkPC
         Thread th;
         volatile bool stop;
         bool primed;
+        int primeNeed = 8;                        // 160 ms au départ, 80 ms après une panne sèche
         readonly int bytesPerSec;
         public volatile bool Muted;
 
@@ -77,7 +80,8 @@ namespace ScreenLinkPC
                 // marque « terminé » pour qu'il soit libre au départ
                 int fo = IntPtr.Size * 2 + 8; Marshal.WriteInt32(hdrs[i], fo, Marshal.ReadInt32(hdrs[i], fo) | 1);
             }
-            th = new Thread(Pump) { IsBackground = true, Name = "SL-audio-out" };
+            timeBeginPeriod(1);
+            th = new Thread(Pump) { IsBackground = true, Name = "SL-audio-out", Priority = ThreadPriority.AboveNormal };
             th.Start();
         }
 
@@ -88,7 +92,7 @@ namespace ScreenLinkPC
                 queue.Enqueue(pcm);
                 queued += pcm.Length;
                 // retard excessif (plus de 300 ms) : on rattrape en jetant les plus anciens
-                while (queued - firstOff > bytesPerSec * 3 / 10 && queue.Count > 1)
+                while (queued - firstOff > bytesPerSec * 45 / 100 && queue.Count > 1)
                 {
                     byte[] d = queue.Dequeue();
                     queued -= d.Length;
@@ -128,7 +132,7 @@ namespace ScreenLinkPC
                 // attend 60 ms de son avant de (re)démarrer pour absorber les irrégularités du réseau
                 if (!primed)
                 {
-                    lock (lk) { if (queued - firstOff >= chunk * 3) primed = true; }
+                    lock (lk) { if (queued - firstOff >= chunk * primeNeed) primed = true; }
                     if (!primed) { Thread.Sleep(5); continue; }
                 }
                 bool wrote = false, allDone = true;
@@ -143,8 +147,8 @@ namespace ScreenLinkPC
                         wrote = true; allDone = false;
                     }
                 }
-                if (allDone && !wrote) primed = false;                      // panne sèche : on refait le tampon
-                Thread.Sleep(wrote ? 2 : 5);
+                if (allDone && !wrote) { primed = false; primeNeed = 4; }                      // panne sèche : on refait le tampon
+                Thread.Sleep(2);
             }
         }
 
@@ -162,6 +166,7 @@ namespace ScreenLinkPC
                     Marshal.FreeHGlobal(hdrs[i]); Marshal.FreeHGlobal(data[i]);
                 }
                 waveOutClose(hwo);
+                timeEndPeriod(1);
                 hwo = IntPtr.Zero;
             }
         }

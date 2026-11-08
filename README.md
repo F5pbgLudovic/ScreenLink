@@ -1,4 +1,4 @@
-# ScreenLink V1.0 @F5PBG 2026
+# ScreenLink V1.1 @F5PBG 2026
 
 **Français** · [English below](#english)
 
@@ -8,7 +8,7 @@ Deux programmes :
 
 | Programme | Rôle |
 |---|---|
-| `ScreenLink-1.0.apk` | à installer sur le smartphone (Android 8 minimum, son : Android 10 minimum) |
+| `ScreenLink-1.1.apk` | à installer sur le smartphone (Android 8 minimum, son : Android 10 minimum) |
 | `ScreenLinkPC.exe` | à lancer sur le PC Windows 10/11 (un seul fichier, rien à installer) |
 
 ## Installation
@@ -24,7 +24,7 @@ Deux programmes :
 - **Molette** = défilement ; **Maj + molette** = horizontal ; **Ctrl + molette** = zoom (pincement).
 - **Clavier** : le texte tapé, Ctrl+V (collage), Entrée, Effacer, Échap (= Retour) vont dans le champ de texte actif du téléphone.
 - Boutons : Retour, Accueil, Récents, Notifications, Réglages rapides, Vol +/−, Réveil, Verrou, **PNG** (capture d'écran).
-- Réglages à chaud : taille maximale (1280 à native), images/s (24/30/60), débit (2 à 30 Mbit/s), son, sortie audio (par exemple un câble audio virtuel pour OBS), muet.
+- Réglages à chaud : taille maximale (1280 à native), images/s (24/30/60), débit (2 à 30 Mbit/s), son, **Mute tel** (coupe le haut-parleur du téléphone, le son reste envoyé au PC), sortie audio (par exemple un câble audio virtuel pour OBS), muet.
 - **OBS Studio** : **F10** masque les barres, il ne reste que l'écran du téléphone, dans une fenêtre qui garde ses proportions → source « Capture de fenêtre ». La case *Montrer le doigt* dessine un cercle sous la souris pendant le clic.
 
 ## Sécurité
@@ -34,7 +34,7 @@ Le téléphone n'accepte une connexion qu'avec le code à 6 chiffres (échange p
 - Contenu protégé (applications bancaires, certaines vidéos) : écran noir. Certaines applications interdisent la capture du son.
 - Les touchers passent par un service d'accessibilité (pas de droits root/adb) : les glissements sont un peu moins fluides qu'avec scrcpy.
 - Android redemande l'autorisation de capture à chaque démarrage du partage.
-- Le son du téléphone continue de sortir sur le téléphone (baissez son volume pour l'enregistrement).
+- Le son du téléphone sort aussi sur le téléphone, sauf si vous cochez « Mute tel » (le volume média du téléphone est alors mis à 0 pendant la prise, puis rétabli).
 
 ## Compiler
 - Android : `android\build.ps1` (JDK, Gradle et SDK Android portables ; le chemin de la chaîne d'outils de PhoneSDRLink est en tête du script). Clé de signature `screenlink.jks` non publiée (l'APK n'est signé que si elle existe).
@@ -48,7 +48,7 @@ Protocole et notes de projet : [LISEZMOI.md](LISEZMOI.md). Licence GPL v3.
 
 View and control an Android phone screen from a Windows PC, **video + audio**, over **Wi-Fi** (same network) or **USB**. Made for recording app demo videos with **OBS Studio** (window capture of ScreenLinkPC).
 
-- `ScreenLink-1.0.apk` – install on the phone (Android 8+, audio needs Android 10+).
+- `ScreenLink-1.1.apk` – install on the phone (Android 8+, audio needs Android 10+).
 - `ScreenLinkPC.exe` – run on Windows 10/11 (single file).
 
 **Setup**: install the APK → *Start sharing* (accept entire-screen capture) → *Enable mouse control* and turn on the **ScreenLink** accessibility service → on the PC enter the phone IP and the 6-digit code (Wi-Fi) or choose USB (needs `adb.exe`, USB debugging on) → *Connect*.
