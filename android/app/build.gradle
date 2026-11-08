@@ -1,0 +1,32 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'fr.f5pbg.screenlink'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'fr.f5pbg.screenlink'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+    signingConfigs {
+        release {
+            storeFile file('../../screenlink.jks')
+            storePassword 'screenlink'
+            keyAlias 'screenlink'
+            keyPassword 'screenlink'
+        }
+    }
+    buildTypes {
+        release {
+            if (file('../../screenlink.jks').exists()) signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    lint { abortOnError false; checkReleaseBuilds false }
+}

@@ -1,0 +1,430 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
+using System.Threading;
+using System.Windows.Forms;
+
+namespace ScreenLinkPC
+{
+    sealed class MainForm : Form
+    {
+        readonly Settings st = Settings.Load();
+        readonly VideoView view = new VideoView();
+        readonly Panel top = new Panel();
+        readonly StatusStrip strip = new StatusStrip();
+        readonly ToolStripStatusLabel lbl = new ToolStripStatusLabel();
+        ComboBox cbMode, cbSize, cbFps, cbRate, cbDev;
+        TextBox tbHost, tbPin;
+        CheckBox chkAudio, chkFinger, chkMute;
+        Button btnConnect;
+
+        Link link;
+        MfDecoder dec;
+        AudioOut aout;
+        readonly object decLock = new object();
+        volatile bool connecting;
+        int frames, fpsShown;
+        long fpsT = Stopwatch.GetTimestamp();
+        string phoneName = "", extra = "";
+        bool inputOk = true;
+        int curW, curH;
+        bool loading = true;
+
+        public MainForm()
+        {
+            Text = "ScreenLink V1.0 @F5PBG 2026";
+            Icon = SystemIcons.Application;
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            BackColor = Color.FromArgb(24, 28, 36);
+            ForeColor = Color.White;
+            KeyPreview = true;
+            DoubleBuffered = true;
+            StartPosition = FormStartPosition.Manual;
+            ClientSize = new Size(480, 900);
+
+            BuildTop();
+            strip.Items.Add(lbl);
+            strip.BackColor = Color.FromArgb(24, 28, 36);
+            lbl.ForeColor = Color.White;
+            view.Dock = DockStyle.Fill;
+            Controls.Add(view);
+            Controls.Add(strip);
+            Controls.Add(top);
+            view.BringToFront();
+
+            view.Touch = delegate(int a, float x, float y) { if (link != null) link.Touch(a, x, y); };
+            view.Wheel = delegate(float x, float y, int dx, int dy, bool c) { if (link != null) link.Scroll(x, y, dx, dy, c); };
+            view.Key = delegate(int k) { if (link != null) link.Key(k); };
+
+            if (st.W > 200 && st.H > 200 && st.X > -2000)
+            {
+                Location = new Point(st.X, st.Y);
+                Size = new Size(st.W, st.H);
+            }
+            else CenterToScreen();
+            loading = false;
+            SetStatus(L.T("Non connecté", "Not connected"));
+            Shown += delegate { if (st.Host.Length == 0 && st.Mode == "wifi") tbHost.Focus(); };
+            ResizeEnd += delegate { KeepAspect(); };
+            FormClosing += delegate { SaveSettings(); Disconnect(); };
+        }
+
+        // ------------------------------------------------------------------ interface
+        Label Lab(string t) { Label l = new Label(); l.Text = t; l.AutoSize = true; l.Margin = new Padding(8, 8, 2, 0); l.ForeColor = Color.FromArgb(200, 210, 230); return l; }
+
+        ComboBox Combo(int w, params string[] items)
+        {
+            ComboBox c = new ComboBox();
+            c.DropDownStyle = ComboBoxStyle.DropDownList; c.Width = w; c.Margin = new Padding(2, 4, 2, 0);
+            c.Items.AddRange(items);
+            return c;
+        }
+
+        Button Btn(string t, int w, EventHandler h)
+        {
+            Button b = new Button();
+            b.Text = t; b.Width = w; b.Height = 26; b.Margin = new Padding(2, 3, 2, 0);
+            b.FlatStyle = FlatStyle.System; b.TabStop = false;
+            b.Click += delegate(object s, EventArgs e) { h(s, e); view.Focus(); };
+            return b;
+        }
+
+        void BuildTop()
+        {
+            FlowLayoutPanel r1 = new FlowLayoutPanel(), r2 = new FlowLayoutPanel(), r3 = new FlowLayoutPanel();
+            foreach (FlowLayoutPanel r in new FlowLayoutPanel[] { r1, r2, r3 })
+            { r.Dock = DockStyle.Top; r.AutoSize = true; r.WrapContents = true; r.AutoSizeMode = AutoSizeMode.GrowAndShrink; r.Padding = new Padding(2, 0, 2, 2); }
+
+            cbMode = Combo(70, "Wi-Fi", "USB");
+            cbMode.SelectedIndex = st.Mode == "usb" ? 1 : 0;
+            cbMode.SelectedIndexChanged += delegate { tbHost.Enabled = cbMode.SelectedIndex == 0; };
+            tbHost = new TextBox { Width = 110, Text = st.Host, Margin = new Padding(2, 4, 2, 0) };
+            tbHost.Enabled = cbMode.SelectedIndex == 0;
+            tbPin = new TextBox { Width = 60, Text = st.Pin, MaxLength = 6, Margin = new Padding(2, 4, 2, 0) };
+            btnConnect = Btn(L.T("Connecter", "Connect"), 90, delegate { if (link != null || connecting) Disconnect(); else Connect(); });
+            r1.Controls.AddRange(new Control[] { Lab(L.T("Liaison", "Link")), cbMode, Lab("IP"), tbHost, Lab(L.T("Code", "Code")), tbPin, btnConnect });
+
+            cbSize = Combo(78, "1280", "1600", "1920", "2400", L.T("Originale", "Native"));
+            int[] sizes = { 1280, 1600, 1920, 2400, 4096 };
+            cbSize.SelectedIndex = Math.Max(0, Array.IndexOf(sizes, st.MaxSize));
+            if (Array.IndexOf(sizes, st.MaxSize) < 0) cbSize.SelectedIndex = 2;
+            cbFps = Combo(50, "24", "30", "60");
+            cbFps.SelectedIndex = st.Fps >= 60 ? 2 : st.Fps >= 30 ? 1 : 0;
+            cbRate = Combo(64, "2", "4", "8", "12", "20", "30");
+            int[] rates = { 2000, 4000, 8000, 12000, 20000, 30000 };
+            cbRate.SelectedIndex = Math.Max(0, Array.IndexOf(rates, st.Kbps)); if (Array.IndexOf(rates, st.Kbps) < 0) cbRate.SelectedIndex = 2;
+            chkAudio = new CheckBox { Text = L.T("Son", "Audio"), Checked = st.Audio, AutoSize = true, Margin = new Padding(8, 6, 2, 0) };
+            chkMute = new CheckBox { Text = L.T("Muet", "Mute"), AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
+            chkMute.CheckedChanged += delegate { if (aout != null) aout.Muted = chkMute.Checked; };
+            cbDev = Combo(170);
+            cbDev.Items.Add(L.T("Sortie son par défaut", "Default audio output"));
+            foreach (string d in AudioOut.Devices()) cbDev.Items.Add(d);
+            cbDev.SelectedIndex = (st.AudioDev >= 0 && st.AudioDev + 1 < cbDev.Items.Count) ? st.AudioDev + 1 : 0;
+            chkFinger = new CheckBox { Text = L.T("Montrer le doigt", "Show finger"), Checked = st.ShowFinger, AutoSize = true, Margin = new Padding(8, 6, 2, 0) };
+            chkFinger.CheckedChanged += delegate { view.ShowFinger = chkFinger.Checked; };
+            view.ShowFinger = st.ShowFinger;
+            r2.Controls.AddRange(new Control[] { Lab(L.T("Taille max", "Max size")), cbSize, Lab("fps"), cbFps, Lab("Mbit/s"), cbRate, chkAudio, chkMute, cbDev, chkFinger });
+            EventHandler apply = delegate { ApplySettings(); };
+            cbSize.SelectedIndexChanged += apply; cbFps.SelectedIndexChanged += apply; cbRate.SelectedIndexChanged += apply; chkAudio.CheckedChanged += apply;
+
+            r3.Controls.AddRange(new Control[] {
+                Btn("◀ " + L.T("Retour", "Back"), 80, delegate { K(Link.KEY_BACK); }),
+                Btn("● " + L.T("Accueil", "Home"), 80, delegate { K(Link.KEY_HOME); }),
+                Btn("■ " + L.T("Récents", "Recents"), 80, delegate { K(Link.KEY_RECENTS); }),
+                Btn(L.T("Notifs", "Notifs"), 58, delegate { K(Link.KEY_NOTIF); }),
+                Btn(L.T("Réglages", "Quick"), 64, delegate { K(Link.KEY_QUICK); }),
+                Btn("Vol +", 50, delegate { K(Link.KEY_VOLUP); }),
+                Btn("Vol −", 50, delegate { K(Link.KEY_VOLDOWN); }),
+                Btn(L.T("Réveil", "Wake"), 60, delegate { K(Link.KEY_WAKE); }),
+                Btn(L.T("Verrou", "Lock"), 60, delegate { K(Link.KEY_LOCK); }),
+                Btn("PNG", 44, delegate { SavePng(); }),
+                Btn(L.T("Barre : F10", "Bars: F10"), 88, delegate { ToggleBars(); })
+            });
+            top.Dock = DockStyle.Top; top.AutoSize = true; top.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+            top.Controls.Add(r3); top.Controls.Add(r2); top.Controls.Add(r1);
+        }
+
+        void K(int k) { if (link != null) link.Key(k); }
+
+        void ToggleBars()
+        {
+            bool show = !top.Visible;
+            int before = view.Height;
+            top.Visible = show; strip.Visible = show;
+            if (!show) Text = "ScreenLink V1.0 @F5PBG 2026";
+            KeepAspect();
+        }
+
+        protected override void OnKeyDown(KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.F10) { ToggleBars(); e.Handled = true; e.SuppressKeyPress = true; return; }
+            if (view.Focused && link != null)
+            {
+                if (e.KeyCode == Keys.Back) { link.Key(Link.KEY_BACKSPACE); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.Enter) { link.Key(Link.KEY_ENTER); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.KeyCode == Keys.Escape) { link.Key(Link.KEY_BACK); e.Handled = true; e.SuppressKeyPress = true; }
+                else if (e.Control && e.KeyCode == Keys.V && Clipboard.ContainsText()) { link.Text(Clipboard.GetText()); e.Handled = true; e.SuppressKeyPress = true; }
+            }
+            base.OnKeyDown(e);
+        }
+
+        protected override void OnKeyPress(KeyPressEventArgs e)
+        {
+            if (view.Focused && link != null && e.KeyChar >= ' ') { link.Text(e.KeyChar.ToString()); e.Handled = true; }
+            base.OnKeyPress(e);
+        }
+
+        void KeepAspect()
+        {
+            if (curW <= 0 || WindowState != FormWindowState.Normal) return;
+            Rectangle wa = Screen.FromControl(this).WorkingArea;
+            int chrome = ClientSize.Height - view.Height;     // hauteur occupée par les barres
+            int vh = ClientSize.Height - chrome;
+            int vw = (int)Math.Round(vh * (curW / (double)curH));
+            if (vw < 120) vw = 120;
+            int maxW = wa.Width - (Width - ClientSize.Width);
+            if (vw > maxW) { vw = maxW; vh = (int)Math.Round(vw * (curH / (double)curW)); }
+            ClientSize = new Size(vw, vh + chrome);
+        }
+
+        void FitFirst()
+        {
+            Rectangle wa = Screen.FromControl(this).WorkingArea;
+            int chrome = ClientSize.Height - view.Height;
+            int borderH = Height - ClientSize.Height;
+            int vh = (int)((wa.Height - borderH - chrome) * 0.92);
+            ClientSize = new Size((int)(vh * (curW / (double)curH)), vh + chrome);
+            Location = new Point(wa.Left + (wa.Width - Width) / 2, wa.Top + Math.Max(0, (wa.Height - Height) / 2));
+        }
+
+        void SavePng()
+        {
+            Bitmap b = view.Snapshot();
+            if (b == null) return;
+            string dir = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
+            string f = Path.Combine(dir, "ScreenLink-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".png");
+            b.Save(f, ImageFormat.Png); b.Dispose();
+            SetStatus(L.T("Image enregistrée : ", "Saved: ") + f);
+        }
+
+        // ------------------------------------------------------------------ état
+        void SetStatus(string s)
+        {
+            if (InvokeRequired) { try { BeginInvoke((MethodInvoker)delegate { SetStatus(s); }); } catch { } return; }
+            lbl.Text = s;
+            if (!top.Visible) return;
+            Text = "ScreenLink V1.0 @F5PBG 2026 — " + s;
+        }
+
+        void SaveSettings()
+        {
+            st.Mode = cbMode.SelectedIndex == 1 ? "usb" : "wifi";
+            st.Host = tbHost.Text.Trim(); st.Pin = tbPin.Text.Trim();
+            int[] sizes = { 1280, 1600, 1920, 2400, 4096 };
+            st.MaxSize = sizes[cbSize.SelectedIndex];
+            st.Fps = new int[] { 24, 30, 60 }[cbFps.SelectedIndex];
+            st.Kbps = new int[] { 2000, 4000, 8000, 12000, 20000, 30000 }[cbRate.SelectedIndex];
+            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked;
+            st.AudioDev = cbDev.SelectedIndex - 1;
+            if (WindowState == FormWindowState.Normal && !loading) { st.X = Left; st.Y = Top; st.W = Width; st.H = Height; }
+            st.Save();
+        }
+
+        void ApplySettings()
+        {
+            if (loading) return;
+            SaveSettings();
+            if (link != null) link.SendSettings(st);
+        }
+
+        // ------------------------------------------------------------------ connexion
+        void Connect()
+        {
+            SaveSettings();
+            if (st.Pin.Length < 6) { MessageBox.Show(this, L.T("Saisissez le code à 6 chiffres affiché sur le téléphone.", "Enter the 6-digit code shown on the phone."), "ScreenLink"); return; }
+            bool usb = st.Mode == "usb";
+            if (!usb && st.Host.Length == 0) { MessageBox.Show(this, L.T("Saisissez l'adresse IP affichée sur le téléphone.", "Enter the IP address shown on the phone."), "ScreenLink"); return; }
+            connecting = true;
+            btnConnect.Text = L.T("Annuler", "Cancel");
+            Thread t = new Thread(delegate() { ConnectWork(usb); }) { IsBackground = true };
+            t.Start();
+        }
+
+        void ConnectWork(bool usb)
+        {
+            string host = st.Host;
+            int port = st.Port;
+            string err = null;
+            try
+            {
+                if (usb)
+                {
+                    string adb = Adb.Find(st.AdbPath);
+                    if (adb == null) { Fail(L.T("adb.exe introuvable : placez-le à côté de ScreenLinkPC.exe ou dans le PATH.", "adb.exe not found: put it next to ScreenLinkPC.exe or in PATH.")); return; }
+                    SetStatus(L.T("Recherche du téléphone USB…", "Looking for the USB phone…"));
+                    string dv = Adb.Run(adb, "devices", 15000);
+                    string serial = null;
+                    foreach (string line in dv.Split('\n'))
+                    {
+                        string[] p = line.Trim().Split('\t');
+                        if (p.Length == 2 && p[1] == "device") { serial = p[0]; break; }
+                        if (p.Length == 2 && p[1] == "unauthorized") { Fail(L.T("Acceptez le débogage USB sur le téléphone, puis recommencez.", "Accept USB debugging on the phone, then try again.")); return; }
+                    }
+                    if (serial == null) { Fail(L.T("Aucun téléphone USB trouvé (débogage USB activé ?).", "No USB phone found (USB debugging enabled?).")); return; }
+                    string s = "-s " + serial + " ";
+                    Adb.Run(adb, s + "forward tcp:" + port + " tcp:" + port, 15000);
+                    host = "127.0.0.1";
+                    Link probe = new Link();
+                    err = probe.Connect(host, port, st.Pin, st);
+                    if (err == null) { Attach(probe); return; }
+                    if (err == L.T("Code incorrect", "Wrong code")) { Fail(err); return; }
+                    // le partage n'est pas démarré : on lance l'application sur le téléphone
+                    SetStatus(L.T("Démarrage sur le téléphone — acceptez la capture d'écran…", "Starting on the phone — accept the screen capture…"));
+                    Adb.Run(adb, s + "shell am start -n fr.f5pbg.screenlink/.MainActivity --ez start true", 15000);
+                    DateTime end = DateTime.Now.AddSeconds(60);
+                    while (connecting && DateTime.Now < end)
+                    {
+                        Thread.Sleep(1200);
+                        Adb.Run(adb, s + "forward tcp:" + port + " tcp:" + port, 15000);
+                        Link l2 = new Link();
+                        err = l2.Connect(host, port, st.Pin, st);
+                        if (err == null) { Attach(l2); return; }
+                        if (err == L.T("Code incorrect", "Wrong code")) { Fail(err); return; }
+                    }
+                    if (connecting) Fail(L.T("Le téléphone n'a pas démarré le partage.", "The phone did not start sharing."));
+                    return;
+                }
+                SetStatus(L.T("Connexion à ", "Connecting to ") + host + "…");
+                Link l = new Link();
+                err = l.Connect(host, port, st.Pin, st);
+                if (err == null) Attach(l); else Fail(err);
+            }
+            catch (Exception e) { Fail(e.Message); }
+        }
+
+        void Fail(string msg)
+        {
+            connecting = false;
+            SetStatus(msg);
+            try { BeginInvoke((MethodInvoker)delegate { btnConnect.Text = L.T("Connecter", "Connect"); }); } catch { }
+        }
+
+        void Attach(Link l)
+        {
+            if (!connecting) { l.Close(null); return; }
+            l.VideoConfig = OnVideoConfig;
+            l.VideoFrame = OnVideoFrame;
+            l.AudioConfig = OnAudioConfig;
+            l.Audio = delegate(byte[] pcm) { AudioOut a = aout; if (a != null) a.Push(pcm); };
+            l.Info = OnInfo;
+            l.Closed = delegate(string why)
+            {
+                try { BeginInvoke((MethodInvoker)delegate { if (link == l) { Disconnect(); if (why != null) SetStatus(why); } }); } catch { }
+            };
+            link = l;
+            connecting = false;
+            try { BeginInvoke((MethodInvoker)delegate { btnConnect.Text = L.T("Déconnecter", "Disconnect"); view.Focus(); }); } catch { }
+            SetStatus(L.T("Connecté — en attente de l'image…", "Connected — waiting for video…"));
+        }
+
+        void Disconnect()
+        {
+            connecting = false;
+            Link l = link;
+            link = null;
+            if (l != null) l.Close(null);
+            lock (decLock) { if (dec != null) { dec.Dispose(); dec = null; } }
+            if (aout != null) { aout.Dispose(); aout = null; }
+            if (btnConnect != null) btnConnect.Text = L.T("Connecter", "Connect");
+            SetStatus(L.T("Non connecté", "Not connected"));
+        }
+
+        void OnInfo(string t)
+        {
+            foreach (string line in t.Split('\n'))
+            {
+                int i = line.IndexOf('=');
+                if (i < 0) continue;
+                string k = line.Substring(0, i), v = line.Substring(i + 1).Trim();
+                if (k == "name") phoneName = v;
+                else if (k == "input") inputOk = v == "1";
+                else if (k == "error") SetStatus(L.T("Erreur côté téléphone : ", "Phone error: ") + v);
+            }
+            if (!inputOk) extra = L.T("  ⚠ commande non activée sur le téléphone", "  ⚠ control not enabled on the phone"); else extra = "";
+            ShowRunning();
+        }
+
+        void ShowRunning()
+        {
+            SetStatus(phoneName + "  " + curW + "×" + curH + "  " + fpsShown + " fps" + extra);
+        }
+
+        void OnVideoConfig(int w, int h, byte[] csd)
+        {
+            lock (decLock)
+            {
+                if (dec != null) { dec.Dispose(); dec = null; }
+                try
+                {
+                    dec = new MfDecoder(w, h);
+                    dec.Frame = delegate(IntPtr p, int stride, int fw, int fh) { view.Present(p, stride, fw, fh); frames++; };
+                    view.Reset(w, h);
+                    dec.Decode(csd, 0, csd.Length);
+                }
+                catch (Exception e) { SetStatus(L.T("Décodeur H.264 : ", "H.264 decoder: ") + e.Message); dec = null; return; }
+            }
+            bool first = curW == 0;
+            curW = w; curH = h;
+            try
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    if (first) FitFirst(); else KeepAspect();
+                    Invalidate();
+                });
+            }
+            catch { }
+        }
+
+        void OnVideoFrame(byte[] d, int off, int len, bool key)
+        {
+            lock (decLock)
+            {
+                if (dec == null) return;
+                try { dec.Decode(d, off, len); }
+                catch (Exception e) { SetStatus("Decode : " + e.Message); }
+            }
+            long now = Stopwatch.GetTimestamp();
+            if (now - fpsT >= Stopwatch.Frequency)
+            {
+                fpsShown = frames; frames = 0; fpsT = now;
+                ShowRunning();
+            }
+        }
+
+        void OnAudioConfig(int rate, int ch)
+        {
+            if (aout != null) { aout.Dispose(); aout = null; }
+            try
+            {
+                aout = new AudioOut(rate, ch, cbDev.SelectedIndex - 1);
+                aout.Muted = chkMute.Checked;
+            }
+            catch (Exception e) { SetStatus(L.T("Sortie son : ", "Audio output: ") + e.Message); }
+        }
+    }
+
+    static class Program
+    {
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new MainForm());
+        }
+    }
+}
