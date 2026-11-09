@@ -177,12 +177,13 @@ namespace ScreenLinkPC
 
         public void SendSettings(Settings st)
         {
-            byte[] b = new byte[9];
+            byte[] b = new byte[10];
             b[0] = (byte)(st.MaxSize >> 8); b[1] = (byte)st.MaxSize;
             b[2] = (byte)st.Fps;
             PutI(b, 3, st.Kbps);
             b[7] = (byte)(st.Audio ? 1 : 0);
             b[8] = (byte)(st.MuteTel ? 1 : 0);
+            b[9] = (byte)(st.NoNotif ? 1 : 0);
             Send(C_SETTINGS, b);
         }
 

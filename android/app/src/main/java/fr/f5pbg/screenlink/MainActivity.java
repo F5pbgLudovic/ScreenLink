@@ -33,7 +33,7 @@ public class MainActivity extends Activity {
     private String ver() { try { return getPackageManager().getPackageInfo(getPackageName(), 0).versionName; } catch (Exception e) { return "1.0"; } }
     private static final int REQ_PROJ = 1, REQ_PERM = 2;
     private TextView tvStatus, tvIp, tvPin, tvAccess, tvHelp;
-    private Button btnStart, btnAccess, btnPin;
+    private Button btnStart, btnAccess, btnPin, btnDnd;
     private final Handler h = new Handler(Looper.getMainLooper());
     private boolean wantStart;
 
@@ -58,7 +58,31 @@ public class MainActivity extends Activity {
         sub.setTextColor(Color.rgb(160, 175, 200)); sub.setPadding(0, 0, 0, pad);
         ll.addView(sub);
 
-        tvStatus = text(ll, 20, Color.WHITE);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        ll.addView(row, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        tvStatus = new TextView(this);
+        tvStatus.setTextSize(20); tvStatus.setTextColor(Color.WHITE); tvStatus.setPadding(0, 12, 0, 12);
+        row.addView(tvStatus, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        float dn = getResources().getDisplayMetrics().density;
+        final float dd = dn;
+        View quit = new View(this) {
+            @Override protected void onDraw(android.graphics.Canvas c) {
+                android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+                float w = getWidth(), hh = getHeight(), r = Math.min(w, hh) / 2f;
+                p.setColor(Color.rgb(220, 38, 38));
+                c.drawCircle(w / 2f, hh / 2f, r, p);
+                p.setColor(Color.WHITE);
+                float q = r * 0.42f;
+                c.drawRoundRect(new android.graphics.RectF(w / 2f - q, hh / 2f - q, w / 2f + q, hh / 2f + q), dd * 3, dd * 3, p);
+            }
+        };
+        quit.setContentDescription(T("Arrêter et quitter ScreenLink", "Stop and quit ScreenLink"));
+        quit.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { quitAll(); } });
+        row.addView(quit, new LinearLayout.LayoutParams((int) (48 * dn), (int) (48 * dn)));
+        row.setClipChildren(false); ll.setClipChildren(false); sv.setClipChildren(false); sv.setClipToPadding(false);
+        quit.setTranslationY(-6 * dn);   // centré entre le sous-titre et le bouton « Démarrer »
         btnStart = button(ll, "");
         btnStart.setOnClickListener(new View.OnClickListener() { public void onClick(View v) { toggle(); } });
 
@@ -72,6 +96,11 @@ public class MainActivity extends Activity {
         btnAccess = button(ll, T("Activer la commande à la souris", "Enable mouse control"));
         btnAccess.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
             startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        } });
+
+        btnDnd = button(ll, T("Autoriser « Ne pas déranger » (case Pas de notif)", "Allow “Do not disturb” (No notif checkbox)"));
+        btnDnd.setOnClickListener(new View.OnClickListener() { public void onClick(View v) {
+            startActivity(new Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS));
         } });
 
         tvHelp = text(ll, 14, Color.rgb(160, 175, 200));
@@ -118,6 +147,14 @@ public class MainActivity extends Activity {
 
     @Override protected void onResume() { super.onResume(); h.post(tick); }
     @Override protected void onPause() { super.onPause(); h.removeCallbacks(tick); }
+
+    /** Arrête le partage (le service rétablit volume et « Ne pas déranger »), ferme l'écran et termine le processus. */
+    private void quitAll() {
+        try { stopService(new Intent(this, CaptureService.class)); } catch (Exception e) { }
+        h.removeCallbacks(tick);
+        finishAndRemoveTask();
+        h.postDelayed(new Runnable() { public void run() { android.os.Process.killProcess(android.os.Process.myPid()); } }, 700);
+    }
 
     private void toggle() {
         if (CaptureService.running) {
@@ -179,5 +216,6 @@ public class MainActivity extends Activity {
                                  "✘ Mouse control not enabled (view only)"));
         tvAccess.setTextColor(acc ? Color.rgb(90, 220, 120) : Color.rgb(255, 150, 120));
         btnAccess.setVisibility(acc ? View.GONE : View.VISIBLE);
+        btnDnd.setVisibility(CaptureService.dndAllowed(this) ? View.GONE : View.VISIBLE);
     }
 }

@@ -80,6 +80,30 @@ public class CaptureService extends Service {
         } catch (Exception e) { }
     }
 
+    static boolean dndAllowed(Context c) {
+        try { return ((NotificationManager) c.getSystemService(NOTIFICATION_SERVICE)).isNotificationPolicyAccessGranted(); }
+        catch (Exception e) { return false; }
+    }
+
+    /** Active « Alarmes seulement » pendant la prise (plus de bandeaux de notification dans l'image) ; rétablit ensuite. */
+    synchronized boolean setNoNotif(boolean on) {
+        try {
+            NotificationManager nm = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+            if (!nm.isNotificationPolicyAccessGranted()) return false;
+            SharedPreferences sp = getSharedPreferences("sl", MODE_PRIVATE);
+            if (on && sp.getInt("dndPrev", -1) < 0) {
+                sp.edit().putInt("dndPrev", nm.getCurrentInterruptionFilter()).apply();
+                nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_ALARMS);
+            } else if (!on && sp.getInt("dndPrev", -1) >= 0) {
+                int prev = sp.getInt("dndPrev", NotificationManager.INTERRUPTION_FILTER_ALL);
+                sp.edit().remove("dndPrev").apply();
+                if (prev < 1 || prev > 4) prev = NotificationManager.INTERRUPTION_FILTER_ALL;
+                nm.setInterruptionFilter(prev);
+            }
+            return true;
+        } catch (Exception e) { return false; }
+    }
+
     // Le gestionnaire d énergie de certains téléphones (OnePlus/Oppo « HANS ») gèle une application passée en arrière-plan,
     // même avec un service au premier plan, sauf si elle joue du son : on joue donc un silence en continu.
     private volatile boolean keepAlive;
@@ -232,6 +256,7 @@ public class CaptureService extends Service {
         running = false;
         inst = null;
         setPhoneMute(false);
+        setNoNotif(false);
         stopKeepAlive();
         try { if (server != null) server.close(); } catch (Exception e) { }
         Session c = current;

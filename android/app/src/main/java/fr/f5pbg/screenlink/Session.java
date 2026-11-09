@@ -115,6 +115,7 @@ final class Session implements Runnable {
             stopAudio();
             if (writer != null) { try { writer.join(1000); } catch (Exception e) { } }
             svc.setPhoneMute(false);
+            svc.setNoNotif(false);
             svc.detach(this);
         }
     }
@@ -147,6 +148,9 @@ final class Session implements Runnable {
                 kbps = b.getInt();
                 audioOn = b.get() != 0;
                 svc.setPhoneMute(b.hasRemaining() && b.get() != 0);
+                boolean noNotif = b.hasRemaining() && b.get() != 0;
+                boolean dndOk = svc.setNoNotif(noNotif);
+                put(INFO, ("dnd=" + (!noNotif || dndOk ? 1 : 0) + "\n").getBytes());
                 if (maxSize < 160) maxSize = 160;
                 if (fps < 5) fps = 5; if (fps > 60) fps = 60;
                 if (kbps < 500) kbps = 500;

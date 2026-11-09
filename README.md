@@ -1,4 +1,4 @@
-# ScreenLink V1.1 @F5PBG 2026
+# ScreenLink V1.2 @F5PBG 2026
 
 **Français** · [English below](#english)
 
@@ -8,7 +8,7 @@ Deux programmes :
 
 | Programme | Rôle |
 |---|---|
-| `ScreenLink-1.1.apk` | à installer sur le smartphone (Android 8 minimum, son : Android 10 minimum) |
+| `ScreenLink-1.2.apk` | à installer sur le smartphone (Android 8 minimum, son : Android 10 minimum) |
 | `ScreenLinkPC.exe` | à lancer sur le PC Windows 10/11 (un seul fichier, rien à installer) |
 
 ## Installation
@@ -19,12 +19,14 @@ Deux programmes :
    - **Wi-Fi** : saisir l'adresse IP et le code à 6 chiffres affichés sur le téléphone, puis *Connecter*.
    - **USB** : activer le débogage USB sur le téléphone, brancher, choisir *USB*, saisir le code, *Connecter*. Le PC cherche `adb.exe` (à côté de l'exe, dans le PATH ou `C:\Android`), crée le lien et lance l'application ; il reste à accepter la capture sur le téléphone.
 
+Sur le téléphone, le **bouton rouge d'arrêt** (à droite de « PC connecté ») arrête le partage et ferme complètement l'application.
+
 ## Utilisation
 - **Clic gauche** = doigt (toucher, glisser, appui long). **Clic droit** = Retour, **clic milieu** = Accueil, boutons latéraux = Retour / Récents.
 - **Molette** = défilement ; **Maj + molette** = horizontal ; **Ctrl + molette** = zoom (pincement).
 - **Clavier** : le texte tapé, Ctrl+V (collage), Entrée, Effacer, Échap (= Retour) vont dans le champ de texte actif du téléphone.
 - Boutons : Retour, Accueil, Récents, Notifications, Réglages rapides, Vol +/−, Réveil, Verrou, **PNG** (capture d'écran).
-- Réglages à chaud : taille maximale (1280 à native), images/s (24/30/60), débit (2 à 30 Mbit/s), son, **Mute tel** (coupe le haut-parleur du téléphone, le son reste envoyé au PC), sortie audio (par exemple un câble audio virtuel pour OBS), muet.
+- Réglages à chaud : taille maximale (1280 à native), images/s (24/30/60), débit (2 à 30 Mbit/s), son, **Mute tel** (coupe le haut-parleur du téléphone, le son reste envoyé au PC), **Pas de notif** (mode « Alarmes seulement » pendant la prise, plus de bandeaux dans l'image ; à autoriser une fois sur le téléphone avec le bouton « Autoriser Ne pas déranger »), sortie audio (par exemple un câble audio virtuel pour OBS), muet.
 - **OBS Studio** : **F10** masque les barres, il ne reste que l'écran du téléphone, dans une fenêtre qui garde ses proportions → source « Capture de fenêtre ». La case *Montrer le doigt* dessine un cercle sous la souris pendant le clic.
 
 ## Sécurité
@@ -48,12 +50,12 @@ Protocole et notes de projet : [LISEZMOI.md](LISEZMOI.md). Licence GPL v3.
 
 View and control an Android phone screen from a Windows PC, **video + audio**, over **Wi-Fi** (same network) or **USB**. Made for recording app demo videos with **OBS Studio** (window capture of ScreenLinkPC).
 
-- `ScreenLink-1.1.apk` – install on the phone (Android 8+, audio needs Android 10+).
+- `ScreenLink-1.2.apk` – install on the phone (Android 8+, audio needs Android 10+).
 - `ScreenLinkPC.exe` – run on Windows 10/11 (single file).
 
 **Setup**: install the APK → *Start sharing* (accept entire-screen capture) → *Enable mouse control* and turn on the **ScreenLink** accessibility service → on the PC enter the phone IP and the 6-digit code (Wi-Fi) or choose USB (needs `adb.exe`, USB debugging on) → *Connect*.
 
-**Use**: left click = finger (tap/drag/long press), right click = Back, middle click = Home, wheel = scroll (Shift = horizontal, Ctrl = pinch zoom), typed text and Ctrl+V go to the focused text field. **F10** hides the toolbars for a clean OBS window capture. Live settings: size, fps, bitrate, audio, audio output device.
+**Use**: left click = finger (tap/drag/long press), right click = Back, middle click = Home, wheel = scroll (Shift = horizontal, Ctrl = pinch zoom), typed text and Ctrl+V go to the focused text field. **F10** hides the toolbars for a clean OBS window capture. Live settings: size, fps, bitrate, audio, audio output device, **Mute tel** (phone silent, audio still sent), **No notif** (phone in “Alarms only” during capture, allow “Do not disturb” once in the app). A red stop button on the phone stops sharing and quits the app.
 
 **Security**: 6-digit code (SHA-256 challenge/response), one connection at a time, 1-minute lockout after 5 failures. Wi-Fi traffic is not encrypted: use a trusted network.
 

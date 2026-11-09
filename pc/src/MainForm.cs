@@ -18,7 +18,8 @@ namespace ScreenLinkPC
         readonly ToolStripStatusLabel lbl = new ToolStripStatusLabel();
         ComboBox cbMode, cbSize, cbFps, cbRate, cbDev;
         TextBox tbHost, tbPin;
-        CheckBox chkAudio, chkFinger, chkMute, chkMuteTel;
+        CheckBox chkAudio, chkFinger, chkMute, chkMuteTel, chkNoNotif;
+        bool dndOk = true;
         Button btnConnect;
 
         Link link;
@@ -35,7 +36,7 @@ namespace ScreenLinkPC
 
         public MainForm()
         {
-            Text = "ScreenLink V1.1 @F5PBG 2026";
+            Text = "ScreenLink V1.2 @F5PBG 2026";
             Icon = SystemIcons.Application;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             BackColor = Color.FromArgb(24, 28, 36);
@@ -123,6 +124,7 @@ namespace ScreenLinkPC
             chkMute = new CheckBox { Text = L.T("Muet", "Mute"), AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
             chkMute.CheckedChanged += delegate { if (aout != null) aout.Muted = chkMute.Checked; };
             chkMuteTel = new CheckBox { Text = "Mute tel", Checked = st.MuteTel, AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
+            chkNoNotif = new CheckBox { Text = L.T("Pas de notif", "No notif"), Checked = st.NoNotif, AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
             cbDev = Combo(170);
             cbDev.Items.Add(L.T("Sortie son par défaut", "Default audio output"));
             foreach (string d in AudioOut.Devices()) cbDev.Items.Add(d);
@@ -130,9 +132,9 @@ namespace ScreenLinkPC
             chkFinger = new CheckBox { Text = L.T("Montrer le doigt", "Show finger"), Checked = st.ShowFinger, AutoSize = true, Margin = new Padding(8, 6, 2, 0) };
             chkFinger.CheckedChanged += delegate { view.ShowFinger = chkFinger.Checked; };
             view.ShowFinger = st.ShowFinger;
-            r2.Controls.AddRange(new Control[] { Lab(L.T("Taille max", "Max size")), cbSize, Lab("fps"), cbFps, Lab("Mbit/s"), cbRate, chkAudio, chkMute, chkMuteTel, cbDev, chkFinger });
+            r2.Controls.AddRange(new Control[] { Lab(L.T("Taille max", "Max size")), cbSize, Lab("fps"), cbFps, Lab("Mbit/s"), cbRate, chkAudio, chkMute, chkMuteTel, chkNoNotif, cbDev, chkFinger });
             EventHandler apply = delegate { ApplySettings(); };
-            cbSize.SelectedIndexChanged += apply; cbFps.SelectedIndexChanged += apply; cbRate.SelectedIndexChanged += apply; chkAudio.CheckedChanged += apply; chkMuteTel.CheckedChanged += apply;
+            cbSize.SelectedIndexChanged += apply; cbFps.SelectedIndexChanged += apply; cbRate.SelectedIndexChanged += apply; chkAudio.CheckedChanged += apply; chkMuteTel.CheckedChanged += apply; chkNoNotif.CheckedChanged += apply;
 
             r3.Controls.AddRange(new Control[] {
                 Btn("◀ " + L.T("Retour", "Back"), 80, delegate { K(Link.KEY_BACK); }),
@@ -158,7 +160,7 @@ namespace ScreenLinkPC
             bool show = !top.Visible;
             int vh = Math.Max(200, ClientSize.Height - Chrome());
             top.Visible = show; strip.Visible = show;
-            if (!show) Text = "ScreenLink V1.1 @F5PBG 2026";
+            if (!show) Text = "ScreenLink V1.2 @F5PBG 2026";
             PerformLayout();
             FitWindow(vh, false);
         }
@@ -184,6 +186,25 @@ namespace ScreenLinkPC
 
         [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
         struct RECT { public int Left, Top, Right, Bottom; }
+
+        /// <summary>Les rangées de boutons (AutoSize + ancrées en haut) ne recalculent pas leur hauteur quand la largeur change : on la fixe.</summary>
+        void FixRows()
+        {
+            int cw = ClientSize.Width;
+            if (cw <= 0) return;
+            foreach (Control c in top.Controls)
+            {
+                int h = c.GetPreferredSize(new Size(cw, 0)).Height;
+                if (c.AutoSize) c.AutoSize = false;
+                if (c.Height != h) c.Height = h;
+            }
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            if (top.Controls.Count > 0) FixRows();
+        }
 
         int Chrome() { return (top.Visible ? top.Height : 0) + (strip.Visible ? strip.Height : 0); }
 
@@ -222,18 +243,34 @@ namespace ScreenLinkPC
         {
             if (curW <= 0 || curH <= 0 || WindowState != FormWindowState.Normal) return;
             Rectangle wa = Screen.FromControl(this).WorkingArea;
-            int nonW = Width - ClientSize.Width, nonH = Height - ClientSize.Height, chrome = Chrome();
+            int nonW = Width - ClientSize.Width, nonH = Height - ClientSize.Height;
             double ratio = curW / (double)curH;
-            int maxVH = (int)(wa.Height * 0.9) - nonH - chrome;
-            int maxVW = (int)(wa.Width * 0.9) - nonW;
-            int vh = Math.Min(wantVideoH, Math.Min(maxVH, (int)(maxVW / ratio)));
-            if (vh < 200) vh = 200;
-            int vw = (int)Math.Round(vh * ratio);
+            int minCW = Math.Max(1, MinimumSize.Width - nonW);
+            int maxCW = Math.Max(minCW, (int)(wa.Width * 0.9) - nonW);
+            // la hauteur des barres dépend de la largeur (les boutons passent à la ligne) : on itère
+            int vh = Math.Max(200, wantVideoH), vw = vh, chrome = 0;
+            for (int it = 0; it < 4; it++)
+            {
+                vw = (int)Math.Round(vh * ratio);
+                if (vw > maxCW) vw = maxCW;
+                if (vw < minCW) vw = minCW;
+                chrome = ChromeFor(vw);
+                int maxVH = (int)(wa.Height * 0.9) - nonH - chrome;
+                int nh = Math.Min((int)Math.Round(vw / ratio), maxVH);
+                if (nh < 200) nh = 200;
+                if (nh == vh) break;
+                vh = nh;
+            }
             ClientSize = new Size(vw, vh + chrome);
+            PerformLayout();
+            top.PerformLayout();
+            int real = Chrome();
+            if (real != chrome) { ClientSize = new Size(vw, vh + real); PerformLayout(); }
             int x = center ? wa.Left + (wa.Width - Width) / 2 : Left, y = center ? wa.Top + (wa.Height - Height) / 2 : Top;
             x = Math.Max(wa.Left, Math.Min(x, wa.Right - Width));
             y = Math.Max(wa.Top, Math.Min(y, wa.Bottom - Height));
             Location = new Point(x, y);
+            Invalidate(true);
         }
 
         void KeepAspect() { FitWindow(Math.Max(200, ClientSize.Height - Chrome()), false); }
@@ -255,7 +292,7 @@ namespace ScreenLinkPC
             if (InvokeRequired) { try { BeginInvoke((MethodInvoker)delegate { SetStatus(s); }); } catch { } return; }
             lbl.Text = s;
             if (!top.Visible) return;
-            Text = "ScreenLink V1.1 @F5PBG 2026 — " + s;
+            Text = "ScreenLink V1.2 @F5PBG 2026 — " + s;
         }
 
         void SaveSettings()
@@ -266,7 +303,7 @@ namespace ScreenLinkPC
             st.MaxSize = sizes[cbSize.SelectedIndex];
             st.Fps = new int[] { 24, 30, 60 }[cbFps.SelectedIndex];
             st.Kbps = new int[] { 2000, 4000, 8000, 12000, 20000, 30000 }[cbRate.SelectedIndex];
-            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked; st.MuteTel = chkMuteTel.Checked;
+            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked; st.MuteTel = chkMuteTel.Checked; st.NoNotif = chkNoNotif.Checked;
             st.AudioDev = cbDev.SelectedIndex - 1;
             if (WindowState == FormWindowState.Normal && !loading) { st.X = Left; st.Y = Top; st.W = Width; st.H = Height; }
             st.Save();
@@ -392,9 +429,11 @@ namespace ScreenLinkPC
                 string k = line.Substring(0, i), v = line.Substring(i + 1).Trim();
                 if (k == "name") phoneName = v;
                 else if (k == "input") inputOk = v == "1";
+                else if (k == "dnd") dndOk = v == "1";
                 else if (k == "error") SetStatus(L.T("Erreur côté téléphone : ", "Phone error: ") + v);
             }
             if (!inputOk) extra = L.T("  ⚠ commande non activée sur le téléphone", "  ⚠ control not enabled on the phone"); else extra = "";
+            if (!dndOk) extra += L.T("  ⚠ « Ne pas déranger » non autorisé sur le téléphone", "  ⚠ “Do not disturb” not allowed on the phone");
             ShowRunning();
         }
 
@@ -476,6 +515,10 @@ namespace ScreenLinkPC
                 {
                     if (first) FitFirst(); else KeepAspect();
                     Invalidate();
+                    // la mise en page des barres (boutons à la ligne) ne se termine qu'après le redimensionnement : on ajuste une 2e fois
+                    System.Windows.Forms.Timer tm = new System.Windows.Forms.Timer { Interval = 250 };
+                    tm.Tick += delegate { tm.Stop(); tm.Dispose(); if (first) FitFirst(); else KeepAspect(); };
+                    tm.Start();
                 });
             }
             catch { }
