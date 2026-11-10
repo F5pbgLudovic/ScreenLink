@@ -21,6 +21,12 @@ namespace ScreenLinkPC
         CheckBox chkAudio, chkFinger, chkMute, chkMuteTel, chkNoNotif;
         bool dndOk = true;
         Button btnConnect;
+        CheckBox chkAuto;
+        const int RETRY_S = 15;
+        readonly System.Windows.Forms.Timer retryTimer = new System.Windows.Forms.Timer();
+        bool wantLink;          // l'utilisateur a demandé la connexion (et ne l'a pas coupée lui-même)
+        int retryIn = RETRY_S;
+        string lastFail = "";
 
         Link link;
         MfDecoder dec;
@@ -33,10 +39,11 @@ namespace ScreenLinkPC
         bool inputOk = true;
         int curW, curH;
         bool loading = true;
+        bool restoredGeom;
 
         public MainForm()
         {
-            Text = "ScreenLink V1.2 @F5PBG 2026";
+            Text = "ScreenLink V1.3 @F5PBG 2026";
             Icon = SystemIcons.Application;
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
             BackColor = Color.FromArgb(24, 28, 36);
@@ -67,13 +74,15 @@ namespace ScreenLinkPC
             {
                 Location = new Point(st.X, st.Y);
                 Size = new Size(st.W, st.H);
+                restoredGeom = true;
             }
             else CenterToScreen();
             loading = false;
             SetStatus(L.T("Non connecté", "Not connected"));
-            Shown += delegate { if (st.Host.Length == 0 && st.Mode == "wifi") tbHost.Focus(); if (Array.IndexOf(Environment.GetCommandLineArgs(), "/connect") > 0) Connect(); };
+            Shown += delegate { if (st.Host.Length == 0 && st.Mode == "wifi") tbHost.Focus(); if (Array.IndexOf(Environment.GetCommandLineArgs(), "/connect") > 0) { wantLink = true; Connect(); } };
             MinimumSize = new Size(430, 500);
             FormClosing += delegate { SaveSettings(); Disconnect(); };
+            ResizeEnd += delegate { SaveSettings(); };
         }
 
         // ------------------------------------------------------------------ interface
@@ -108,8 +117,15 @@ namespace ScreenLinkPC
             tbHost = new TextBox { Width = 110, Text = st.Host, Margin = new Padding(2, 4, 2, 0) };
             tbHost.Enabled = cbMode.SelectedIndex == 0;
             tbPin = new TextBox { Width = 60, Text = st.Pin, MaxLength = 6, Margin = new Padding(2, 4, 2, 0) };
-            btnConnect = Btn(L.T("Connecter", "Connect"), 90, delegate { if (link != null || connecting) Disconnect(); else Connect(); });
-            r1.Controls.AddRange(new Control[] { Lab(L.T("Liaison", "Link")), cbMode, Lab("IP"), tbHost, Lab(L.T("Code", "Code")), tbPin, btnConnect });
+            btnConnect = Btn(L.T("Connecter", "Connect"), 90, delegate { if (link != null || connecting) { wantLink = false; Disconnect(); } else { wantLink = true; Connect(); } });
+            btnConnect.FlatStyle = FlatStyle.Flat; btnConnect.FlatAppearance.BorderSize = 0; btnConnect.ForeColor = Color.White;
+            btnConnect.Font = new Font(btnConnect.Font, FontStyle.Bold);
+            chkAuto = new CheckBox { Text = "Auto", Checked = st.Auto, AutoSize = true, Margin = new Padding(4, 6, 2, 0) };
+            new ToolTip().SetToolTip(chkAuto, L.T("Reconnexion automatique toutes les 15 secondes si la connexion est perdue", "Automatic reconnection every 15 seconds if the connection is lost"));
+            chkAuto.CheckedChanged += delegate { SaveSettings(); retryIn = RETRY_S; };
+            retryTimer.Interval = 1000; retryTimer.Tick += delegate { RetryTick(); }; retryTimer.Start();
+            UpdateConnectUi();
+            r1.Controls.AddRange(new Control[] { Lab(L.T("Liaison", "Link")), cbMode, Lab("IP"), tbHost, Lab(L.T("Code", "Code")), tbPin, btnConnect, chkAuto });
 
             cbSize = Combo(78, "1280", "1600", "1920", "2400", L.T("Originale", "Native"));
             int[] sizes = { 1280, 1600, 1920, 2400, 4096 };
@@ -160,7 +176,7 @@ namespace ScreenLinkPC
             bool show = !top.Visible;
             int vh = Math.Max(200, ClientSize.Height - Chrome());
             top.Visible = show; strip.Visible = show;
-            if (!show) Text = "ScreenLink V1.2 @F5PBG 2026";
+            if (!show) Text = "ScreenLink V1.3 @F5PBG 2026";
             PerformLayout();
             FitWindow(vh, false);
         }
@@ -274,7 +290,13 @@ namespace ScreenLinkPC
         }
 
         void KeepAspect() { FitWindow(Math.Max(200, ClientSize.Height - Chrome()), false); }
-        void FitFirst() { FitWindow(curH, true); }
+        void FitFirst()
+        {
+            if (!restoredGeom) { FitWindow(curH, true); return; }
+            // taille et position mémorisées : on ne les change que si les proportions ne correspondent plus au téléphone
+            double want = curW / (double)curH, have = ClientSize.Width / (double)Math.Max(1, ClientSize.Height - Chrome());
+            if (Math.Abs(have / want - 1) > 0.03) KeepAspect();
+        }
 
         void SavePng()
         {
@@ -292,7 +314,7 @@ namespace ScreenLinkPC
             if (InvokeRequired) { try { BeginInvoke((MethodInvoker)delegate { SetStatus(s); }); } catch { } return; }
             lbl.Text = s;
             if (!top.Visible) return;
-            Text = "ScreenLink V1.2 @F5PBG 2026 — " + s;
+            Text = "ScreenLink V1.3 @F5PBG 2026 — " + s;
         }
 
         void SaveSettings()
@@ -303,9 +325,9 @@ namespace ScreenLinkPC
             st.MaxSize = sizes[cbSize.SelectedIndex];
             st.Fps = new int[] { 24, 30, 60 }[cbFps.SelectedIndex];
             st.Kbps = new int[] { 2000, 4000, 8000, 12000, 20000, 30000 }[cbRate.SelectedIndex];
-            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked; st.MuteTel = chkMuteTel.Checked; st.NoNotif = chkNoNotif.Checked;
+            st.Audio = chkAudio.Checked; st.ShowFinger = chkFinger.Checked; st.MuteTel = chkMuteTel.Checked; st.NoNotif = chkNoNotif.Checked; if (chkAuto != null) st.Auto = chkAuto.Checked;
             st.AudioDev = cbDev.SelectedIndex - 1;
-            if (WindowState == FormWindowState.Normal && !loading) { st.X = Left; st.Y = Top; st.W = Width; st.H = Height; }
+            if (WindowState == FormWindowState.Normal && !loading && top.Visible) { st.X = Left; st.Y = Top; st.W = Width; st.H = Height; }
             st.Save();
         }
 
@@ -320,11 +342,11 @@ namespace ScreenLinkPC
         void Connect()
         {
             SaveSettings();
-            if (st.Pin.Length < 6) { MessageBox.Show(this, L.T("Saisissez le code à 6 chiffres affiché sur le téléphone.", "Enter the 6-digit code shown on the phone."), "ScreenLink"); return; }
+            if (st.Pin.Length < 6) { wantLink = false; MessageBox.Show(this, L.T("Saisissez le code à 6 chiffres affiché sur le téléphone.", "Enter the 6-digit code shown on the phone."), "ScreenLink"); return; }
             bool usb = st.Mode == "usb";
-            if (!usb && st.Host.Length == 0) { MessageBox.Show(this, L.T("Saisissez l'adresse IP affichée sur le téléphone.", "Enter the IP address shown on the phone."), "ScreenLink"); return; }
+            if (!usb && st.Host.Length == 0) { wantLink = false; MessageBox.Show(this, L.T("Saisissez l'adresse IP affichée sur le téléphone.", "Enter the IP address shown on the phone."), "ScreenLink"); return; }
             connecting = true;
-            btnConnect.Text = L.T("Annuler", "Cancel");
+            UpdateConnectUi();
             Thread t = new Thread(delegate() { ConnectWork(usb); }) { IsBackground = true };
             t.Start();
         }
@@ -384,8 +406,30 @@ namespace ScreenLinkPC
         void Fail(string msg)
         {
             connecting = false;
+            lastFail = msg;
+            retryIn = RETRY_S;
+            // un code faux n'est jamais réessayé tout seul (le téléphone bloque après 5 erreurs)
+            if (msg == L.T("Code incorrect", "Wrong code")) wantLink = false;
             SetStatus(msg);
-            try { BeginInvoke((MethodInvoker)delegate { btnConnect.Text = L.T("Connecter", "Connect"); }); } catch { }
+            UpdateConnectUi();
+        }
+
+        /// <summary>Bouton Connecter : rouge tant qu'il n'y a pas de connexion, orange pendant l'essai, vert une fois connecté.</summary>
+        void UpdateConnectUi()
+        {
+            if (btnConnect == null) return;
+            if (InvokeRequired) { try { BeginInvoke((MethodInvoker)delegate { UpdateConnectUi(); }); } catch { } return; }
+            if (link != null) { btnConnect.Text = L.T("Déconnecter", "Disconnect"); btnConnect.BackColor = Color.FromArgb(30, 130, 60); }
+            else if (connecting) { btnConnect.Text = L.T("Annuler", "Cancel"); btnConnect.BackColor = Color.FromArgb(210, 120, 20); }
+            else { btnConnect.Text = L.T("Connecter", "Connect"); btnConnect.BackColor = Color.FromArgb(200, 30, 30); }
+        }
+
+        /// <summary>Toutes les secondes : si la connexion est perdue et que « Auto » est cochée, nouvel essai toutes les 15 s.</summary>
+        void RetryTick()
+        {
+            if (!chkAuto.Checked || !wantLink || link != null || connecting) { retryIn = RETRY_S; return; }
+            if (--retryIn <= 0) { retryIn = RETRY_S; Connect(); return; }
+            SetStatus((lastFail.Length > 0 ? lastFail + " — " : "") + L.T("reconnexion auto dans ", "auto reconnect in ") + retryIn + " s");
         }
 
         void Attach(Link l)
@@ -398,13 +442,14 @@ namespace ScreenLinkPC
             l.Info = OnInfo;
             l.Closed = delegate(string why)
             {
-                try { BeginInvoke((MethodInvoker)delegate { if (link == l) { Disconnect(); if (why != null) SetStatus(why); } }); } catch { }
+                try { BeginInvoke((MethodInvoker)delegate { if (link == l) { Disconnect(); lastFail = why ?? L.T("Connexion perdue", "Connection lost"); SetStatus(lastFail); } }); } catch { }
             };
             StartDecoder();
             link = l;
             l.Start();
             connecting = false;
-            try { BeginInvoke((MethodInvoker)delegate { btnConnect.Text = L.T("Déconnecter", "Disconnect"); view.Focus(); }); } catch { }
+            UpdateConnectUi();
+            try { BeginInvoke((MethodInvoker)delegate { view.Focus(); }); } catch { }
             SetStatus(L.T("Connecté — en attente de l'image…", "Connected — waiting for video…"));
         }
 
@@ -416,7 +461,8 @@ namespace ScreenLinkPC
             if (l != null) l.Close(null);
             StopDecoder();
             if (aout != null) { aout.Dispose(); aout = null; }
-            if (btnConnect != null) btnConnect.Text = L.T("Connecter", "Connect");
+            UpdateConnectUi();
+            retryIn = RETRY_S;
             SetStatus(L.T("Non connecté", "Not connected"));
         }
 

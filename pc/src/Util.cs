@@ -26,6 +26,7 @@ namespace ScreenLinkPC
         public bool ShowFinger = true;
         public bool MuteTel = false;
         public bool NoNotif = false;
+        public bool Auto = false;
         public int Port = 27183;
         public string AdbPath = "";
         public int X = -1, Y = -1, W = 0, H = 0;
@@ -65,6 +66,7 @@ namespace ScreenLinkPC
                         case "ShowFinger": s.ShowFinger = v == "1"; break;
                         case "MuteTel": s.MuteTel = v == "1"; break;
                         case "NoNotif": s.NoNotif = v == "1"; break;
+                        case "Auto": s.Auto = v == "1"; break;
                         case "Port": if (int.TryParse(v, out n)) s.Port = n; break;
                         case "X": if (int.TryParse(v, out n)) s.X = n; break;
                         case "Y": if (int.TryParse(v, out n)) s.Y = n; break;
@@ -85,7 +87,7 @@ namespace ScreenLinkPC
                 l.Add("Mode=" + Mode); l.Add("Host=" + Host); l.Add("Pin=" + Pin); l.Add("AdbPath=" + AdbPath);
                 l.Add("MaxSize=" + MaxSize); l.Add("Fps=" + Fps); l.Add("Kbps=" + Kbps);
                 l.Add("Audio=" + (Audio ? "1" : "0")); l.Add("AudioDev=" + AudioDev);
-                l.Add("ShowFinger=" + (ShowFinger ? "1" : "0")); l.Add("MuteTel=" + (MuteTel ? "1" : "0")); l.Add("NoNotif=" + (NoNotif ? "1" : "0")); l.Add("Port=" + Port);
+                l.Add("ShowFinger=" + (ShowFinger ? "1" : "0")); l.Add("MuteTel=" + (MuteTel ? "1" : "0")); l.Add("NoNotif=" + (NoNotif ? "1" : "0")); l.Add("Auto=" + (Auto ? "1" : "0")); l.Add("Port=" + Port);
                 l.Add("X=" + X); l.Add("Y=" + Y); l.Add("W=" + W); l.Add("H=" + H);
                 File.WriteAllLines(FilePath, l.ToArray(), new UTF8Encoding(false));
             }
